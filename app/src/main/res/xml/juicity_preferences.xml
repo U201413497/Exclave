@@ -13,11 +13,22 @@
             app:key="serverAddress"
             app:title="@string/server_address"
             app:useSimpleSummaryProvider="true" />
+
+        <!-- 唯一端口配置：单端口或范围 -->
         <EditTextPreference
             app:icon="@drawable/ic_maps_directions_boat"
-            app:key="serverPort"
+            app:key="serverPorts"
             app:title="@string/server_port"
+            app:summary="单端口如 443；范围如 3000-3100；多个如 3000,3005"
             app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_flip_camera_android_24"
+            app:key="serverHopInterval"
+            app:title="@string/hysteria_hop_interval"
+            app:summary="端口跳跃间隔（秒）。仅端口范围/多端口时有效，0 关闭"
+            app:useSimpleSummaryProvider="true" />
+
         <EditTextPreference
             app:icon="@drawable/ic_baseline_person_24"
             app:key="serverUserId"
