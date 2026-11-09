@@ -1702,7 +1702,17 @@ fun buildV2RayConfig(
                                 protocol = "juicity"
                                 settings = LazyOutboundConfigurationObject(this, V2RayConfig.JuicityOutboundConfigurationObject().apply {
                                     address = bean.serverAddress
-                                    port = bean.serverPort
+                                    val portsStr = bean.serverPorts?.trim().orEmpty().ifEmpty {
+                                        bean.serverPort.toString()
+                                    }
+                                    val first = JuicityBean.firstPortFrom(portsStr).takeIf { it > 0 }
+                                        ?: bean.serverPort
+                                    port = first
+                                    // 始终把完整端口配置传给 core（单端口或范围）
+                                    hop_ports = portsStr
+                                    if (bean.hopInterval != null && bean.hopInterval > 0) {
+                                        hop_interval = bean.hopInterval
+                                    }
                                     uuid = bean.uuid
                                     password = bean.password
                                 })
