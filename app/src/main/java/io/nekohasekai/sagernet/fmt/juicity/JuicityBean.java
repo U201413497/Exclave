@@ -1,22 +1,6 @@
 /******************************************************************************
- *                                                                            *
- * Copyright (C) 2024  dyhkwong                                               *
- *                                                                            *
- * This program is free software: you can redistribute it and/or modify       *
- * it under the terms of the GNU General Public License as published by       *
- * the Free Software Foundation, either version 3 of the License, or          *
- *  (at your option) any later version.                                       *
- *                                                                            *
- * This program is distributed in the hope that it will be useful,            *
- * but WITHOUT ANY WARRANTY; without even the implied warranty of             *
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the              *
- * GNU General Public License for more details.                               *
- *                                                                            *
- * You should have received a copy of the GNU General Public License          *
- * along with this program. If not, see <https://www.gnu.org/licenses/>.      *
- *                                                                            *
+ * Copyright (C) 2024  dyhkwong
  ******************************************************************************/
-
 
 package io.nekohasekai.sagernet.fmt.juicity;
 
@@ -39,7 +23,7 @@ public class JuicityBean extends AbstractBean {
     public String sni;
     public Boolean allowInsecure;
     public String certificates;
-    public String pinnedPeerCertificateChainSha256; // was “pinnedCertChainSha256”
+    public String pinnedPeerCertificateChainSha256;
     public String pinnedPeerCertificatePublicKeySha256;
     public String pinnedPeerCertificateSha256;
     public String mtlsCertificate;
@@ -48,6 +32,14 @@ public class JuicityBean extends AbstractBean {
     public String echConfigList;
     public String echQueryName;
     public String serverNameToVerify;
+
+    /**
+     * 唯一端口配置：单端口 "443"，或范围 "3000-3100"，或列表 "3000,3005"。
+     * serverPort 由该字段解析得到，仅作兼容。
+     */
+    public String serverPorts;
+    /** 跳跃间隔（秒）；端口多于 1 个且 >0 时启用 */
+    public Long hopInterval;
 
     @Override
     public void initializeDefaultValues() {
@@ -66,11 +58,41 @@ public class JuicityBean extends AbstractBean {
         if (echConfigList == null) echConfigList = "";
         if (echQueryName == null) echQueryName = "";
         if (serverNameToVerify == null) serverNameToVerify = "";
+        if (serverPorts == null || serverPorts.isEmpty()) {
+            if (serverPort != null && serverPort > 0) {
+                serverPorts = String.valueOf(serverPort);
+            } else {
+                serverPorts = "";
+            }
+        }
+        if (hopInterval == null) hopInterval = 0L;
+        // 用 serverPorts 同步 serverPort（取第一个有效端口）
+        int first = firstPortFrom(serverPorts);
+        if (first > 0) {
+            serverPort = first;
+        }
+    }
+
+    /** 从 "443" / "3000-3100" / "a,b" 解析第一个端口 */
+    public static int firstPortFrom(String ports) {
+        if (ports == null) return 0;
+        ports = ports.trim();
+        if (ports.isEmpty()) return 0;
+        String part = ports.split(",")[0].trim();
+        if (part.contains("-")) {
+            part = part.split("-", 2)[0].trim();
+        }
+        try {
+            int p = Integer.parseInt(part);
+            if (p > 0 && p <= 65535) return p;
+        } catch (NumberFormatException ignored) {
+        }
+        return 0;
     }
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(7);
+        output.writeInt(8);
         super.serialize(output);
         output.writeString(uuid);
         output.writeString(password);
@@ -83,10 +105,11 @@ public class JuicityBean extends AbstractBean {
         output.writeString(mtlsCertificate);
         output.writeString(mtlsCertificatePrivateKey);
         output.writeString(echConfigList);
-
         output.writeBoolean(echEnabled);
         output.writeString(serverNameToVerify);
         output.writeString(echQueryName);
+        output.writeString(serverPorts);
+        output.writeLong(hopInterval);
     }
 
     @Override
@@ -98,7 +121,7 @@ public class JuicityBean extends AbstractBean {
         sni = input.readString();
         allowInsecure = input.readBoolean();
         if (version < 4) {
-            input.readString(); // congestionControl, removed
+            input.readString();
         }
         if (version >= 3) {
             certificates = input.readString();
@@ -128,6 +151,20 @@ public class JuicityBean extends AbstractBean {
         if (version >= 7) {
             echQueryName = input.readString();
         }
+        if (version >= 8) {
+            serverPorts = input.readString();
+            hopInterval = input.readLong();
+        } else {
+            // 旧数据：用 serverPort 填 serverPorts
+            if (serverPort != null && serverPort > 0) {
+                serverPorts = String.valueOf(serverPort);
+            }
+            hopInterval = 0L;
+        }
+        int first = firstPortFrom(serverPorts);
+        if (first > 0) {
+            serverPort = first;
+        }
     }
 
     @Override
@@ -154,6 +191,12 @@ public class JuicityBean extends AbstractBean {
         bean.echEnabled = echEnabled;
         bean.echConfigList = echConfigList;
         bean.echQueryName = echQueryName;
+        if (serverPorts != null && !serverPorts.isEmpty()) {
+            bean.serverPorts = serverPorts;
+        }
+        if (hopInterval != null && hopInterval > 0) {
+            bean.hopInterval = hopInterval;
+        }
     }
 
     @NotNull
@@ -181,7 +224,6 @@ public class JuicityBean extends AbstractBean {
             return false;
         }
         if (echEnabled) {
-            // do not care if DNS server is reliable or not
             return false;
         }
         if (!allowInsecure) {
@@ -201,5 +243,4 @@ public class JuicityBean extends AbstractBean {
         }
         return true;
     }
-
 }
