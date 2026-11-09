@@ -992,6 +992,8 @@ public class V2RayConfig {
         public Integer port;
         public String uuid;
         public String password;
+        public String hop_ports;
+        public Long hop_interval;
 
     }
 
