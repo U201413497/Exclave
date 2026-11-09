@@ -1,20 +1,5 @@
 /******************************************************************************
- *                                                                            *
- * Copyright (C) 2024  dyhkwong                                               *
- *                                                                            *
- * This program is free software: you can redistribute it and/or modify       *
- * it under the terms of the GNU General Public License as published by       *
- * the Free Software Foundation, either version 3 of the License, or          *
- *  (at your option) any later version.                                       *
- *                                                                            *
- * This program is distributed in the hope that it will be useful,            *
- * but WITHOUT ANY WARRANTY; without even the implied warranty of             *
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the              *
- * GNU General Public License for more details.                               *
- *                                                                            *
- * You should have received a copy of the GNU General Public License          *
- * along with this program. If not, see <https://www.gnu.org/licenses/>.      *
- *                                                                            *
+ * Copyright (C) 2024  dyhkwong
  ******************************************************************************/
 
 package io.nekohasekai.sagernet.fmt.juicity
@@ -29,66 +14,59 @@ fun parseJuicity(url: String): JuicityBean {
     return JuicityBean().apply {
         name = link.fragment
         serverAddress = link.host
-        serverPort = when {
+        // 链接里的 port 作为默认；query ports 可覆盖为范围
+        val linkPort = when {
             !link.hasPort() -> error("invalid port")
             else -> link.port
         }
+        serverPort = linkPort
+        serverPorts = linkPort.toString()
         uuid = parseUUID(link.username)?.toHexDashString() ?: error("invalid uuid")
         password = link.password
-        link.queryParameter("sni")?.also {
-            sni = it
-        }
-        link.queryParameter("allow_insecure")?.takeIf { it == "1" }?.also {
-            allowInsecure = true
-        }
+        link.queryParameter("sni")?.also { sni = it }
+        link.queryParameter("allow_insecure")?.takeIf { it == "1" }?.also { allowInsecure = true }
         link.queryParameter("pinned_certchain_sha256")?.also {
             val hash = try {
-                if (it.length == 64) {
-                    it.hexToByteArray()
-                } else if (it.contains("-") || it.contains("_")) {
-                    Base64.UrlSafe.decode(it)
-                } else {
-                    Base64.decode(it)
+                when {
+                    it.length == 64 -> it.hexToByteArray()
+                    it.contains("-") || it.contains("_") -> Base64.UrlSafe.decode(it)
+                    else -> Base64.decode(it)
                 }
             } catch (_: Exception) {
                 throw IllegalArgumentException("invalid pinned_certchain_sha256")
             }
             require(hash.size == 32) { "invalid pinned_certchain_sha256" }
             pinnedPeerCertificateChainSha256 = Base64.UrlSafe.encode(hash)
-            // match Juicity's behavior
-            // https://github.com/juicity/juicity/blob/412dbe43e091788c5464eb2d6e9c169bdf39f19c/cmd/client/run.go#L97
             allowInsecure = true
         }
+        // 唯一端口配置：ports=3000-3100 或 ports=443
+        link.queryParameter("ports")?.takeIf { it.isNotBlank() }?.also {
+            serverPorts = it
+            val first = JuicityBean.firstPortFrom(it)
+            if (first > 0) serverPort = first
+        }
+        link.queryParameter("hop_interval")?.toLongOrNull()?.also { hopInterval = it }
     }
 }
 
 fun JuicityBean.toUri(): String? {
+    val exportPort = JuicityBean.firstPortFrom(serverPorts).takeIf { it > 0 } ?: serverPort
     val builder = Libexclavecore.newURL("juicity").apply {
-        setHostPort(serverAddress, serverPort)
+        setHostPort(serverAddress, exportPort)
         require(Uuid.parseHexDashOrNull(uuid) != null) { "invalid uuid" }
         username = uuid
-        if (name.isNotEmpty()) {
-            fragment = name
-        }
+        if (name.isNotEmpty()) fragment = name
     }
-    if (password.isNotEmpty()) {
-        builder.password = password
-    }
+    if (password.isNotEmpty()) builder.password = password
     builder.addQueryParameter("congestion_control", "bbr")
-    if (sni.isNotEmpty()) {
-        builder.addQueryParameter("sni", sni)
-    }
+    if (sni.isNotEmpty()) builder.addQueryParameter("sni", sni)
     if (pinnedPeerCertificateChainSha256.isNotEmpty()) {
-        // https://github.com/juicity/juicity/blob/412dbe43e091788c5464eb2d6e9c169bdf39f19c/cmd/client/run.go#L87-L96
-        // it actually supports Base64 URL-safe encoding with padding, Base64 standard encoding with padding and Hex encoding
         val certChainHash = pinnedPeerCertificateChainSha256.listByLineOrComma()[0]
         val hash = try {
-            if (certChainHash.length == 64) {
-                certChainHash.hexToByteArray()
-            } else if (certChainHash.contains("-") || certChainHash.contains("_")) {
-                Base64.UrlSafe.decode(certChainHash)
-            } else {
-                Base64.decode(certChainHash)
+            when {
+                certChainHash.length == 64 -> certChainHash.hexToByteArray()
+                certChainHash.contains("-") || certChainHash.contains("_") -> Base64.UrlSafe.decode(certChainHash)
+                else -> Base64.decode(certChainHash)
             }
         } catch (_: Exception) {
             throw IllegalArgumentException("invalid pinned_certchain_sha256")
@@ -96,13 +74,22 @@ fun JuicityBean.toUri(): String? {
         require(hash.size == 32) { "invalid pinned_certchain_sha256" }
         builder.addQueryParameter("pinned_certchain_sha256", Base64.UrlSafe.encode(hash))
     }
-    // as `pinnedPeerCertificate(PublicKey)Sha256` is not exportable,
-    // only add `allow_insecure=1` if `pinnedPeerCertificate(PublicKey)Sha256` is not used
     if (pinnedPeerCertificateChainSha256.isNotEmpty() ||
         (allowInsecure && pinnedPeerCertificateSha256.isEmpty() &&
-                pinnedPeerCertificatePublicKeySha256.isEmpty() && serverNameToVerify.listByLineOrComma().isEmpty())
-        ) {
+                pinnedPeerCertificatePublicKeySha256.isEmpty() &&
+                serverNameToVerify.listByLineOrComma().isEmpty())
+    ) {
         builder.addQueryParameter("allow_insecure", "1")
+    }
+    // 范围或与链接 port 不同时写出 ports
+    if (!serverPorts.isNullOrEmpty()) {
+        val p = serverPorts.trim()
+        if (p.contains("-") || p.contains(",") || p != exportPort.toString()) {
+            builder.addQueryParameter("ports", p)
+        }
+    }
+    if (hopInterval != null && hopInterval > 0) {
+        builder.addQueryParameter("hop_interval", hopInterval.toString())
     }
     return builder.string
 }
