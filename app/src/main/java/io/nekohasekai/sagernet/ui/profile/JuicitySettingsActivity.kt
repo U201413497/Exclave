@@ -1,20 +1,5 @@
 /******************************************************************************
- *                                                                            *
- * Copyright (C) 2024  dyhkwong                                               *
- *                                                                            *
- * This program is free software: you can redistribute it and/or modify       *
- * it under the terms of the GNU General Public License as published by       *
- * the Free Software Foundation, either version 3 of the License, or          *
- *  (at your option) any later version.                                       *
- *                                                                            *
- * This program is distributed in the hope that it will be useful,            *
- * but WITHOUT ANY WARRANTY; without even the implied warranty of             *
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the              *
- * GNU General Public License for more details.                               *
- *                                                                            *
- * You should have received a copy of the GNU General Public License          *
- * along with this program. If not, see <https://www.gnu.org/licenses/>.      *
- *                                                                            *
+ * Copyright (C) 2024  dyhkwong
  ******************************************************************************/
 
 package io.nekohasekai.sagernet.ui.profile
@@ -37,7 +22,13 @@ class JuicitySettingsActivity : ProfileSettingsActivity<JuicityBean>() {
     override fun JuicityBean.init() {
         DataStore.profileName = name
         DataStore.serverAddress = serverAddress
-        DataStore.serverPort = serverPort
+        // 只使用 serverPorts 作为唯一端口配置
+        DataStore.serverPorts = when {
+            !serverPorts.isNullOrEmpty() -> serverPorts
+            serverPort != null && serverPort > 0 -> serverPort.toString()
+            else -> ""
+        }
+        DataStore.serverHopInterval = hopInterval ?: 0L
         DataStore.serverUserId = uuid
         DataStore.serverPassword = password
         DataStore.serverSNI = sni
@@ -57,7 +48,11 @@ class JuicitySettingsActivity : ProfileSettingsActivity<JuicityBean>() {
     override fun JuicityBean.serialize() {
         name = DataStore.profileName
         serverAddress = DataStore.serverAddress.unwrapIDN()
-        serverPort = DataStore.serverPort
+        serverPorts = DataStore.serverPorts?.trim().orEmpty()
+        val first = JuicityBean.firstPortFrom(serverPorts)
+        require(first > 0) { "invalid server port" }
+        serverPort = first
+        hopInterval = DataStore.serverHopInterval
         uuid = DataStore.serverUserId
         password = DataStore.serverPassword
         sni = DataStore.serverSNI
@@ -80,11 +75,11 @@ class JuicitySettingsActivity : ProfileSettingsActivity<JuicityBean>() {
     ) {
         addPreferencesFromResource(R.xml.juicity_preferences)
 
-        findPreference<EditTextPreference>(Key.SERVER_PORT)!!.apply {
-            setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
-        }
         findPreference<EditTextPreference>(Key.SERVER_PASSWORD)!!.apply {
             summaryProvider = PasswordSummaryProvider
+        }
+        findPreference<EditTextPreference>(Key.SERVER_HOP_INTERVAL)?.apply {
+            setOnBindEditTextListener(EditTextPreferenceModifiers.Number)
         }
 
         val echEnabled = findPreference<SwitchPreference>(Key.SERVER_ECH_ENABLED)!!
